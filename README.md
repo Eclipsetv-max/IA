@@ -18,6 +18,7 @@ java -cp out mazeai.LabyrinthSimulation
 
 ## Qué verás
 
+- Una **pantalla (ventana Swing)** con el progreso en tiempo real (estadísticas + plano local).
 - Métricas de progreso por episodios (victorias, muertes, ratio de éxito).
 - Estado emocional de la IA (ansiedad, esperanza, frustración, determinación, y reflexión sobre la simulación).
 - Un **plano local del laberinto** (minimapa con `A` para la IA) para observar el progreso.
@@ -47,3 +48,8 @@ Se añadieron 9 documentos en `docs/` para detallar arquitectura, reglas y evolu
 7. `docs/07_modelo_emocional.md`
 8. `docs/08_planos_y_metricas_de_progreso.md`
 9. `docs/09_roadmap_de_mejoras.md`
+
+
+## Nota sobre la pantalla
+
+Si ejecutas en un entorno sin interfaz gráfica (headless), el sistema sigue funcionando en consola.

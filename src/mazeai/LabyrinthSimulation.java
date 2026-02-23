@@ -1,6 +1,13 @@
 package mazeai;
 
+import java.awt.BorderLayout;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.util.*;
+import javax.swing.JFrame;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
 
 /**
  * Simulación de una IA en un laberinto grande con aprendizaje por refuerzo simple (Q-learning).
@@ -243,12 +250,14 @@ public class LabyrinthSimulation {
         private final Random random;
         private final Maze maze;
         private final Agent agent;
+        private final ProgressWindow progressWindow;
 
         Simulation(SimulationConfig config, long seed) {
             this.config = config;
             this.random = new Random(seed);
             this.maze = new Maze(config.width(), config.height(), config.enemyCount(), config.oxygenNodes(), random);
             this.agent = new Agent(random);
+            this.progressWindow = GraphicsEnvironment.isHeadless() ? null : new ProgressWindow();
         }
 
         void run() {
@@ -260,18 +269,26 @@ public class LabyrinthSimulation {
             for (int episode = 1; episode <= config.maxEpisodes(); episode++) {
                 EpisodeResult result = runEpisode(episode);
 
-                if (episode % 100 == 0 || result.win || episode == 1) {
+                if (episode % 10 == 0 || result.win || episode == 1) {
                     printProgress(episode, result);
                 }
 
                 if (result.masteryReached) {
-                    System.out.println("\n>>> MAESTRÍA ALCANZADA: la IA domina el laberinto, enemigos y oxígeno.");
+                    String masteryText = "\n>>> MAESTRÍA ALCANZADA: la IA domina el laberinto, enemigos y oxígeno.";
+                    System.out.println(masteryText);
                     System.out.printf("Episodio final de aprendizaje: %d%n", episode);
+                    if (progressWindow != null) {
+                        progressWindow.appendMessage(masteryText + "\nEpisodio final: " + episode);
+                    }
                     return;
                 }
             }
 
-            System.out.println("\nSe alcanzó el máximo de episodios. La IA sigue aprendiendo, aunque no llegó a maestría total.");
+            String maxText = "\nSe alcanzó el máximo de episodios. La IA sigue aprendiendo, aunque no llegó a maestría total.";
+            System.out.println(maxText);
+            if (progressWindow != null) {
+                progressWindow.appendMessage(maxText);
+            }
         }
 
         private EpisodeResult runEpisode(int episode) {
@@ -412,6 +429,7 @@ public class LabyrinthSimulation {
         private void printProgress(int episode, EpisodeResult result) {
             int dist = manhattan(result.lastPosition(), maze.getGoal());
             String emotion = agent.emotionText(result.lastOxygen(), result.steps(), dist);
+            String miniMap = maze.renderMiniMap(result.lastPosition(), 8);
 
             System.out.println("--- Progreso ---");
             System.out.printf(Locale.US,
@@ -429,7 +447,59 @@ public class LabyrinthSimulation {
                     dist);
             System.out.println("Estado emocional IA: " + emotion);
             System.out.println("Plano local del laberinto (A = IA):");
-            System.out.println(maze.renderMiniMap(result.lastPosition(), 8));
+            System.out.println(miniMap);
+
+            if (progressWindow != null) {
+                progressWindow.update(episode, agent.totalWins, agent.totalDeaths, successRatio(),
+                        agent.totalEnemyEncounters, agent.totalOxygenRefills, agent.hasTank,
+                        agent.knowsHowToUseTank, result.win(), result.steps(), result.lastOxygen(), dist,
+                        emotion, miniMap);
+            }
+        }
+    }
+
+
+    static class ProgressWindow {
+        private final JFrame frame;
+        private final JTextArea textArea;
+
+        ProgressWindow() {
+            frame = new JFrame("Progreso IA en Laberinto");
+            textArea = new JTextArea();
+            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+            textArea.setEditable(false);
+
+            frame.setLayout(new BorderLayout());
+            frame.add(new JScrollPane(textArea), BorderLayout.CENTER);
+            frame.setSize(900, 700);
+            frame.setLocationRelativeTo(null);
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+            SwingUtilities.invokeLater(() -> frame.setVisible(true));
+        }
+
+        void update(int episode, int wins, int deaths, double successRatio, int enemyEncounters,
+                    int oxygenRefills, boolean hasTank, boolean knowsTank, boolean winEpisode,
+                    int steps, int oxygenLeft, int distToGoal, String emotion, String miniMap) {
+            String panel = String.format(Locale.US,
+                    "Episodio: %d\nVictorias: %d | Muertes: %d | Éxito: %.2f%%\n" +
+                            "Encuentros enemigos: %d | Recargas O2: %d\n" +
+                            "Tanque: %s | Usa tanque: %s\n" +
+                            "Resultado: %s | Pasos: %d | O2 restante: %d | Distancia meta: %d\n" +
+                            "Emoción IA: %s\n\n" +
+                            "=== Plano local ===\n%s",
+                    episode, wins, deaths, successRatio * 100.0,
+                    enemyEncounters, oxygenRefills,
+                    hasTank ? "sí" : "no",
+                    knowsTank ? "sí" : "no",
+                    winEpisode ? "VICTORIA" : "DERROTA",
+                    steps, oxygenLeft, distToGoal, emotion, miniMap);
+
+            SwingUtilities.invokeLater(() -> textArea.setText(panel));
+        }
+
+        void appendMessage(String text) {
+            SwingUtilities.invokeLater(() -> textArea.append("\n" + text + "\n"));
         }
     }
 
