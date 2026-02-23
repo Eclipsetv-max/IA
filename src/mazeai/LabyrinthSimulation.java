@@ -22,7 +22,8 @@ public class LabyrinthSimulation {
                 250, // enemigos
                 500, // nodos de oxígeno
                 6_000, // episodios máximos (muertes + intentos)
-                1_500 // pasos máximos por episodio
+                1_500, // pasos máximos por episodio
+                25 // refresco de pantalla en ms (modo visual)
         );
 
         Simulation simulation = new Simulation(config, 42L);
@@ -66,7 +67,8 @@ public class LabyrinthSimulation {
             int enemyCount,
             int oxygenNodes,
             int maxEpisodes,
-            int maxStepsPerEpisode) {
+            int maxStepsPerEpisode,
+            int liveRefreshMs) {
     }
 
     static class Maze {
@@ -156,6 +158,31 @@ public class LabyrinthSimulation {
 
         void setCell(int x, int y, Cell cell) {
             grid[y][x] = cell;
+        }
+
+        String renderTrackingMap(Position agent, int radius, Set<Position> trail, Position deathMark) {
+            StringBuilder sb = new StringBuilder();
+            int minY = Math.max(0, agent.y() - radius);
+            int maxY = Math.min(height - 1, agent.y() + radius);
+            int minX = Math.max(0, agent.x() - radius);
+            int maxX = Math.min(width - 1, agent.x() + radius);
+
+            for (int y = minY; y <= maxY; y++) {
+                for (int x = minX; x <= maxX; x++) {
+                    Position cellPos = new Position(x, y);
+                    if (deathMark != null && deathMark.equals(cellPos)) {
+                        sb.append('M');
+                    } else if (agent.x() == x && agent.y() == y) {
+                        sb.append('A');
+                    } else if (trail.contains(cellPos) && grid[y][x] == Cell.EMPTY) {
+                        sb.append('*');
+                    } else {
+                        sb.append(grid[y][x].symbol);
+                    }
+                }
+                sb.append('\n');
+            }
+            return sb.toString();
         }
 
         String renderMiniMap(Position agent, int radius) {
@@ -297,6 +324,9 @@ public class LabyrinthSimulation {
             boolean alive = true;
             boolean win = false;
             boolean tookTankThisRun = false;
+            Position deathMark = null;
+            Set<Position> trail = new LinkedHashSet<>();
+            trail.add(pos);
             int step;
 
             for (step = 1; step <= config.maxStepsPerEpisode(); step++) {
@@ -343,6 +373,7 @@ public class LabyrinthSimulation {
                     if (!survived) {
                         reward -= 25.0;
                         alive = false;
+                        deathMark = next;
                     } else {
                         reward += 1.8;
                     }
@@ -355,6 +386,7 @@ public class LabyrinthSimulation {
                 if (oxygen <= 0) {
                     reward -= 22.0;
                     alive = false;
+                    deathMark = next;
                 }
 
                 if (next.equals(maze.getGoal())) {
@@ -367,6 +399,16 @@ public class LabyrinthSimulation {
                 String nextState = encodeState(next, oxygen);
                 agent.learn(state, action, reward, nextState, !alive);
                 pos = next;
+                trail.add(pos);
+
+                if (progressWindow != null && (step % 2 == 0 || !alive || step == 1)) {
+                    int distLive = manhattan(pos, maze.getGoal());
+                    String emotionLive = agent.emotionText(oxygen, step, distLive);
+                    String trackingMap = maze.renderTrackingMap(pos, 14, trail, deathMark);
+                    progressWindow.updateLive(episode, step, agent.totalWins, agent.totalDeaths, successRatio(),
+                            oxygen, distLive, emotionLive, trackingMap, !alive, win);
+                    sleepSilently(config.liveRefreshMs());
+                }
 
                 if (!alive) {
                     break;
@@ -426,6 +468,14 @@ public class LabyrinthSimulation {
             return (double) agent.totalWins / attempts;
         }
 
+        private void sleepSilently(int ms) {
+            try {
+                Thread.sleep(ms);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
         private void printProgress(int episode, EpisodeResult result) {
             int dist = manhattan(result.lastPosition(), maze.getGoal());
             String emotion = agent.emotionText(result.lastOxygen(), result.steps(), dist);
@@ -476,6 +526,20 @@ public class LabyrinthSimulation {
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
             SwingUtilities.invokeLater(() -> frame.setVisible(true));
+        }
+
+        void updateLive(int episode, int step, int wins, int deaths, double successRatio, int oxygenLeft,
+                        int distToGoal, String emotion, String trackingMap, boolean ended, boolean won) {
+            String status = ended ? (won ? "VICTORIA" : "MUERTE") : "EN CURSO";
+            String panel = String.format(Locale.US,
+                    "[TIEMPO REAL] Episodio: %d | Paso: %d | Estado: %s\n" +
+                            "Victorias: %d | Muertes: %d | Éxito: %.2f%%\n" +
+                            "O2 restante: %d | Distancia meta: %d\n" +
+                            "Emoción IA: %s\n\n" +
+                            "=== Plano de seguimiento (* = rastro, M = muerte, A = IA) ===\n%s",
+                    episode, step, status, wins, deaths, successRatio * 100.0,
+                    oxygenLeft, distToGoal, emotion, trackingMap);
+            SwingUtilities.invokeLater(() -> textArea.setText(panel));
         }
 
         void update(int episode, int wins, int deaths, double successRatio, int enemyEncounters,
