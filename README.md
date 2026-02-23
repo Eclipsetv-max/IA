@@ -32,3 +32,18 @@ Dentro de `main`, en `SimulationConfig`, puedes modificar:
 - cantidad de nodos de oxígeno,
 - episodios máximos,
 - pasos máximos por episodio.
+
+
+## Documentación adicional (9 archivos de especificación)
+
+Se añadieron 9 documentos en `docs/` para detallar arquitectura, reglas y evolución del proyecto:
+
+1. `docs/01_resumen_general.md`
+2. `docs/02_arquitectura_del_sistema.md`
+3. `docs/03_especificacion_del_mapa.md`
+4. `docs/04_sistema_de_oxigeno.md`
+5. `docs/05_sistema_de_enemigos.md`
+6. `docs/06_modelo_de_aprendizaje_qlearning.md`
+7. `docs/07_modelo_emocional.md`
+8. `docs/08_planos_y_metricas_de_progreso.md`
+9. `docs/09_roadmap_de_mejoras.md`
