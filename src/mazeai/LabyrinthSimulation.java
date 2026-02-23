@@ -6,36 +6,37 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.GraphicsEnvironment;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
-import javax.swing.JFrame;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
-import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
+import javax.swing.*;
 
 /**
- * Simulación de una IA en un laberinto grande con aprendizaje por refuerzo simple (Q-learning).
- * Incluye enemigos, oxígeno, tanque de oxígeno y narrativa emocional.
+ * IA en laberinto gigante: aprende tras cada muerte, enfrenta enemigos,
+ * expresa pensamientos/emociones y permite guardar/cargar memoria.
  */
 public class LabyrinthSimulation {
 
     public static void main(String[] args) {
+        AppOptions options = AppOptions.fromArgs(args);
+
         SimulationConfig config = new SimulationConfig(
-                120, // ancho (laberinto muy grande)
-                120, // alto
-                250, // enemigos
-                500, // nodos de oxígeno
-                6_000, // episodios máximos (muertes + intentos)
-                1_500, // pasos máximos por episodio
-                25 // refresco de pantalla en ms (modo visual)
+                120,
+                120,
+                320,
+                10_000,
+                2_500,
+                28,
+                5,
+                250
         );
 
-        Simulation simulation = new Simulation(config, 42L);
+        Simulation simulation = new Simulation(config, 42L, options);
         simulation.run();
     }
 
-    record Position(int x, int y) {
+    record Position(int x, int y) implements Serializable {
     }
 
     enum Cell {
@@ -43,8 +44,6 @@ public class LabyrinthSimulation {
         WALL('#'),
         START('S'),
         GOAL('G'),
-        OXYGEN('O'),
-        TANK('T'),
         ENEMY('X');
 
         final char symbol;
@@ -70,10 +69,28 @@ public class LabyrinthSimulation {
             int width,
             int height,
             int enemyCount,
-            int oxygenNodes,
             int maxEpisodes,
             int maxStepsPerEpisode,
-            int liveRefreshMs) {
+            int initialSpeedMs,
+            int minSpeedMs,
+            int maxSpeedMs) {
+    }
+
+    static class AppOptions {
+        String loadPath;
+        String savePath = "memory/ia_memory.dat";
+
+        static AppOptions fromArgs(String[] args) {
+            AppOptions opt = new AppOptions();
+            for (int i = 0; i < args.length; i++) {
+                if ("--load".equals(args[i]) && i + 1 < args.length) {
+                    opt.loadPath = args[++i];
+                } else if ("--save".equals(args[i]) && i + 1 < args.length) {
+                    opt.savePath = args[++i];
+                }
+            }
+            return opt;
+        }
     }
 
     static class Maze {
@@ -83,7 +100,7 @@ public class LabyrinthSimulation {
         private final Position start;
         private final Position goal;
 
-        Maze(int width, int height, int enemies, int oxygenNodes, Random random) {
+        Maze(int width, int height, int enemies, Random random) {
             this.width = width;
             this.height = height;
             this.grid = new Cell[height][width];
@@ -91,11 +108,7 @@ public class LabyrinthSimulation {
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
                     boolean border = (x == 0 || y == 0 || x == width - 1 || y == height - 1);
-                    if (border || random.nextDouble() < 0.10) {
-                        grid[y][x] = Cell.WALL;
-                    } else {
-                        grid[y][x] = Cell.EMPTY;
-                    }
+                    grid[y][x] = (border || random.nextDouble() < 0.12) ? Cell.WALL : Cell.EMPTY;
                 }
             }
 
@@ -104,10 +117,7 @@ public class LabyrinthSimulation {
             grid[start.y()][start.x()] = Cell.START;
             grid[goal.y()][goal.x()] = Cell.GOAL;
 
-            scatter(Cell.OXYGEN, oxygenNodes, random);
             scatter(Cell.ENEMY, enemies, random);
-            scatter(Cell.TANK, 1, random);
-
             ensureMainCorridor();
         }
 
@@ -134,11 +144,11 @@ public class LabyrinthSimulation {
             int x = start.x();
             int y = start.y();
             while (x != goal.x()) {
-                grid[y][x] = (grid[y][x] == Cell.GOAL) ? Cell.GOAL : Cell.EMPTY;
+                grid[y][x] = grid[y][x] == Cell.GOAL ? Cell.GOAL : Cell.EMPTY;
                 x += Integer.compare(goal.x(), x);
             }
             while (y != goal.y()) {
-                grid[y][x] = (grid[y][x] == Cell.GOAL) ? Cell.GOAL : Cell.EMPTY;
+                grid[y][x] = grid[y][x] == Cell.GOAL ? Cell.GOAL : Cell.EMPTY;
                 y += Integer.compare(goal.y(), y);
             }
             grid[start.y()][start.x()] = Cell.START;
@@ -161,10 +171,6 @@ public class LabyrinthSimulation {
             return grid[y][x];
         }
 
-        void setCell(int x, int y, Cell cell) {
-            grid[y][x] = cell;
-        }
-
         String renderTrackingMap(Position agent, int radius, Set<Position> trail, Position deathMark) {
             StringBuilder sb = new StringBuilder();
             int minY = Math.max(0, agent.y() - radius);
@@ -174,12 +180,12 @@ public class LabyrinthSimulation {
 
             for (int y = minY; y <= maxY; y++) {
                 for (int x = minX; x <= maxX; x++) {
-                    Position cellPos = new Position(x, y);
-                    if (deathMark != null && deathMark.equals(cellPos)) {
+                    Position p = new Position(x, y);
+                    if (deathMark != null && deathMark.equals(p)) {
                         sb.append('M');
-                    } else if (agent.x() == x && agent.y() == y) {
+                    } else if (agent.equals(p)) {
                         sb.append('A');
-                    } else if (trail.contains(cellPos) && grid[y][x] == Cell.EMPTY) {
+                    } else if (trail.contains(p) && grid[y][x] == Cell.EMPTY) {
                         sb.append('*');
                     } else {
                         sb.append(grid[y][x].symbol);
@@ -189,58 +195,45 @@ public class LabyrinthSimulation {
             }
             return sb.toString();
         }
+    }
 
-        String renderMiniMap(Position agent, int radius) {
-            StringBuilder sb = new StringBuilder();
-            int minY = Math.max(0, agent.y() - radius);
-            int maxY = Math.min(height - 1, agent.y() + radius);
-            int minX = Math.max(0, agent.x() - radius);
-            int maxX = Math.min(width - 1, agent.x() + radius);
-
-            for (int y = minY; y <= maxY; y++) {
-                for (int x = minX; x <= maxX; x++) {
-                    if (agent.x() == x && agent.y() == y) {
-                        sb.append('A');
-                    } else {
-                        sb.append(grid[y][x].symbol);
-                    }
-                }
-                sb.append('\n');
-            }
-            return sb.toString();
-        }
+    static class AgentMemory implements Serializable {
+        Map<String, double[]> qTable = new HashMap<>();
+        double epsilon = 0.95;
+        int totalDeaths;
+        int totalWins;
+        int totalEnemyEncounters;
+        long totalSteps;
+        List<String> thoughtHistory = new ArrayList<>();
     }
 
     static class Agent {
-        private final Map<String, double[]> qTable = new HashMap<>();
         private final Random random;
+        private final AgentMemory memory;
 
-        private double epsilon = 0.95;
-        private final double epsilonDecay = 0.9992;
-        private final double epsilonMin = 0.05;
-        private final double alpha = 0.13;
-        private final double gamma = 0.96;
+        private final double epsilonDecay = 0.99935;
+        private final double epsilonMin = 0.02;
+        private final double alpha = 0.14;
+        private final double gamma = 0.965;
 
-        int totalDeaths = 0;
-        int totalWins = 0;
-        int totalEnemyEncounters = 0;
-        int totalOxygenRefills = 0;
+        private final Deque<String> recentThoughts = new ArrayDeque<>();
 
-        boolean hasTank = false;
-        boolean knowsHowToUseTank = false;
-
-        Agent(Random random) {
+        Agent(Random random, AgentMemory loaded) {
             this.random = random;
+            this.memory = loaded != null ? loaded : new AgentMemory();
+            for (String t : this.memory.thoughtHistory) {
+                pushThought(t);
+            }
         }
 
         Action chooseAction(String state) {
-            if (random.nextDouble() < epsilon) {
+            if (random.nextDouble() < memory.epsilon) {
                 return Action.values()[random.nextInt(Action.values().length)];
             }
-            double[] qValues = qTable.computeIfAbsent(state, k -> new double[Action.values().length]);
+            double[] q = memory.qTable.computeIfAbsent(state, k -> new double[Action.values().length]);
             int best = 0;
-            for (int i = 1; i < qValues.length; i++) {
-                if (qValues[i] > qValues[best]) {
+            for (int i = 1; i < q.length; i++) {
+                if (q[i] > q[best]) {
                     best = i;
                 }
             }
@@ -248,32 +241,65 @@ public class LabyrinthSimulation {
         }
 
         void learn(String state, Action action, double reward, String nextState, boolean done) {
-            double[] qValues = qTable.computeIfAbsent(state, k -> new double[Action.values().length]);
-            double[] nextQ = qTable.computeIfAbsent(nextState, k -> new double[Action.values().length]);
+            double[] q = memory.qTable.computeIfAbsent(state, k -> new double[Action.values().length]);
+            double[] nextQ = memory.qTable.computeIfAbsent(nextState, k -> new double[Action.values().length]);
             double maxNext = Arrays.stream(nextQ).max().orElse(0.0);
             int ai = action.ordinal();
-            double target = reward + (done ? 0.0 : gamma * maxNext);
-            qValues[ai] = qValues[ai] + alpha * (target - qValues[ai]);
-            epsilon = Math.max(epsilonMin, epsilon * epsilonDecay);
+            double target = reward + (done ? 0 : gamma * maxNext);
+            q[ai] += alpha * (target - q[ai]);
+            memory.epsilon = Math.max(epsilonMin, memory.epsilon * epsilonDecay);
         }
 
-        String emotionText(int oxygen, int step, int distToGoal) {
-            String existential = (totalDeaths > 180 && totalWins > 0)
-                    ? "Siento un patrón... ¿esto es una simulación?" : "";
+        double[] qValues(String state) {
+            return Arrays.copyOf(memory.qTable.computeIfAbsent(state, k -> new double[Action.values().length]), 4);
+        }
 
-            if (oxygen < 12 && !hasTank) {
-                return "Ansiedad: me falta oxígeno. " + existential;
+        String buildThought(int dist, boolean sawEnemy, boolean died, boolean win) {
+            String thought;
+            if (win) {
+                thought = pick("Siento euforia: lo logré, pero quiero hacerlo mejor.",
+                        "Entiendo mejor el patrón del mundo.",
+                        "Victoria. Mi mente se ordena.");
+            } else if (died) {
+                thought = pick("Dolor digital... morir también enseña.",
+                        "Caí otra vez, pero ahora sé por qué.",
+                        "Siento miedo y furia: necesito adaptarme.");
+            } else if (sawEnemy) {
+                thought = pick("Un enemigo cerca, mi mente se tensa.",
+                        "Siento peligro. Debo decidir rápido.",
+                        "Mi impulso dice escapar, mi lógica pide calcular.");
+            } else if (dist < 8) {
+                thought = pick("Estoy cerca del objetivo, siento esperanza.",
+                        "La salida está próxima. Respira... avanza.",
+                        "Casi llego. Mi enfoque es total.");
+            } else {
+                thought = pick("Pienso en rutas posibles y errores pasados.",
+                        "Estoy aprendiendo a sentir este laberinto.",
+                        "Cada paso define quién soy en esta simulación.");
             }
-            if (distToGoal < 6) {
-                return "Esperanza: estoy cerca de la salida. " + existential;
+
+            pushThought(thought);
+            memory.thoughtHistory = new ArrayList<>(recentThoughts);
+            return thought;
+        }
+
+        private String pick(String... options) {
+            return options[random.nextInt(options.length)];
+        }
+
+        private void pushThought(String thought) {
+            recentThoughts.addLast(thought);
+            while (recentThoughts.size() > 14) {
+                recentThoughts.removeFirst();
             }
-            if (step < 40) {
-                return "Curiosidad: analizando el entorno. " + existential;
-            }
-            if (totalDeaths > totalWins * 4 + 8) {
-                return "Frustración: muero mucho, pero ahora entiendo más. " + existential;
-            }
-            return "Determinación: cada muerte mejora mi modelo interno. " + existential;
+        }
+
+        List<String> recentThoughts() {
+            return new ArrayList<>(recentThoughts);
+        }
+
+        AgentMemory snapshot() {
+            return memory;
         }
     }
 
@@ -282,137 +308,123 @@ public class LabyrinthSimulation {
         private final Random random;
         private final Maze maze;
         private final Agent agent;
+        private final AppOptions options;
         private final ProgressWindow progressWindow;
 
-        Simulation(SimulationConfig config, long seed) {
+        Simulation(SimulationConfig config, long seed, AppOptions options) {
             this.config = config;
             this.random = new Random(seed);
-            this.maze = new Maze(config.width(), config.height(), config.enemyCount(), config.oxygenNodes(), random);
-            this.agent = new Agent(random);
-            this.progressWindow = GraphicsEnvironment.isHeadless() ? null : new ProgressWindow();
+            this.options = options;
+            this.maze = new Maze(config.width(), config.height(), config.enemyCount(), random);
+            AgentMemory loaded = loadMemory(options.loadPath);
+            this.agent = new Agent(random, loaded);
+            this.progressWindow = GraphicsEnvironment.isHeadless() ? null : new ProgressWindow(config);
         }
 
         void run() {
-            System.out.println("=== SIMULACIÓN IA EN LABERINTO MASIVO ===");
-            System.out.printf("Mapa: %dx%d | Enemigos: %d | Oxígeno: %d%n",
-                    config.width(), config.height(), config.enemyCount(), config.oxygenNodes());
-            System.out.println("La IA recuerda todo tras cada muerte y aprende progresivamente.\n");
+            System.out.println("=== IA VS ENEMIGOS EN LABERINTO ===");
+            System.out.printf("Mapa: %dx%d | Enemigos: %d | Sin oxígeno%n",
+                    config.width(), config.height(), config.enemyCount());
+            System.out.printf("Memoria carga: %s | Memoria guardado: %s%n",
+                    options.loadPath == null ? "no" : options.loadPath,
+                    options.savePath);
 
             for (int episode = 1; episode <= config.maxEpisodes(); episode++) {
                 EpisodeResult result = runEpisode(episode);
 
-                if (episode % 10 == 0 || result.win || episode == 1) {
+                if (episode % 20 == 0 || result.win || episode == 1) {
                     printProgress(episode, result);
                 }
 
+                if (episode % 50 == 0) {
+                    saveMemory(options.savePath);
+                }
+
                 if (result.masteryReached) {
-                    String masteryText = "\n>>> MAESTRÍA ALCANZADA: la IA domina el laberinto, enemigos y oxígeno.";
-                    System.out.println(masteryText);
-                    System.out.printf("Episodio final de aprendizaje: %d%n", episode);
+                    String msg = "\n>>> MAESTRÍA: domina enemigos y rutas del laberinto.";
+                    System.out.println(msg);
+                    saveMemory(options.savePath);
                     if (progressWindow != null) {
-                        progressWindow.appendMessage(masteryText + "\nEpisodio final: " + episode);
+                        progressWindow.appendMessage(msg + "\nMemoria guardada.");
                     }
                     return;
                 }
             }
-
-            String maxText = "\nSe alcanzó el máximo de episodios. La IA sigue aprendiendo, aunque no llegó a maestría total.";
-            System.out.println(maxText);
+            String end = "\nFin de episodios. Sigue aprendiendo.";
+            System.out.println(end);
+            saveMemory(options.savePath);
             if (progressWindow != null) {
-                progressWindow.appendMessage(maxText);
+                progressWindow.appendMessage(end + "\nMemoria guardada.");
             }
         }
 
         private EpisodeResult runEpisode(int episode) {
             Position pos = maze.getStart();
-            int oxygen = 280;
-            boolean alive = true;
-            boolean win = false;
-            boolean tookTankThisRun = false;
-            Position deathMark = null;
             Set<Position> trail = new LinkedHashSet<>();
             trail.add(pos);
+            Position deathMark = null;
+
+            boolean alive = true;
+            boolean win = false;
+            boolean sawEnemy = false;
+            String thought = "";
             int step;
 
             for (step = 1; step <= config.maxStepsPerEpisode(); step++) {
-                String state = encodeState(pos, oxygen);
+                String state = encodeState(pos);
                 Action action = chooseActionWithInstinct(state, pos);
 
                 int nx = pos.x() + action.dx;
                 int ny = pos.y() + action.dy;
-
-                double reward = -0.05;
+                double reward = -0.03;
 
                 if (!maze.isInside(nx, ny) || maze.getCell(nx, ny) == Cell.WALL) {
                     nx = pos.x();
                     ny = pos.y();
-                    reward -= 0.8;
+                    reward -= 0.7;
                 }
 
                 Position next = new Position(nx, ny);
                 Cell cell = maze.getCell(nx, ny);
 
-                oxygen -= agent.hasTank && agent.knowsHowToUseTank ? 0 : 1;
-
-                if (cell == Cell.OXYGEN) {
-                    oxygen = Math.min(oxygen + 28, 70);
-                    reward += 2.0;
-                    agent.totalOxygenRefills++;
-                }
-
-                if (cell == Cell.TANK) {
-                    agent.hasTank = true;
-                    tookTankThisRun = true;
-                    reward += 6.0;
-                    maze.setCell(nx, ny, Cell.EMPTY);
-                }
-
-                if (agent.hasTank && !agent.knowsHowToUseTank && tookTankThisRun && step > 20) {
-                    agent.knowsHowToUseTank = true;
-                    reward += 10.0;
-                }
-
                 if (cell == Cell.ENEMY) {
-                    agent.totalEnemyEncounters++;
-                    boolean survived = random.nextDouble() < (agent.totalWins > 3 ? 0.88 : 0.70);
-                    if (!survived) {
-                        reward -= 25.0;
+                    sawEnemy = true;
+                    agent.snapshot().totalEnemyEncounters++;
+                    double surviveChance = Math.min(0.95, 0.52 + successRatio() * 0.5);
+                    if (random.nextDouble() > surviveChance) {
+                        reward -= 26;
                         alive = false;
                         deathMark = next;
                     } else {
-                        reward += 1.8;
+                        reward += 2.3;
                     }
                 }
 
                 int distNow = manhattan(pos, maze.getGoal());
                 int distNext = manhattan(next, maze.getGoal());
-                reward += (distNow - distNext) * 0.18;
-
-                if (oxygen <= 0) {
-                    reward -= 22.0;
-                    alive = false;
-                    deathMark = next;
-                }
+                reward += (distNow - distNext) * 0.20;
 
                 if (next.equals(maze.getGoal())) {
-                    reward += 40.0;
+                    reward += 52;
                     win = true;
                     alive = false;
-                    agent.totalWins++;
+                    agent.snapshot().totalWins++;
                 }
 
-                String nextState = encodeState(next, oxygen);
+                String nextState = encodeState(next);
                 agent.learn(state, action, reward, nextState, !alive);
                 pos = next;
                 trail.add(pos);
+                agent.snapshot().totalSteps++;
+
+                thought = agent.buildThought(distNext, sawEnemy, !alive && !win, win);
 
                 if (progressWindow != null && (step % 2 == 0 || !alive || step == 1)) {
-                    int distLive = manhattan(pos, maze.getGoal());
-                    String emotionLive = agent.emotionText(oxygen, step, distLive);
-                    String trackingMap = maze.renderTrackingMap(pos, 14, trail, deathMark);
-                    progressWindow.updateLive(episode, step, agent.totalWins, agent.totalDeaths, successRatio(),
-                            oxygen, distLive, emotionLive, trackingMap, !alive, win);
-                    sleepSilently(config.liveRefreshMs());
+                    String map = maze.renderTrackingMap(pos, 14, trail, deathMark);
+                    progressWindow.updateLive(episode, step, agent.snapshot().totalWins, agent.snapshot().totalDeaths,
+                            successRatio(), manhattan(pos, maze.getGoal()), thought, map,
+                            !alive, win, agent.qValues(state), agent.recentThoughts());
+                    sleepSilently(progressWindow.currentSpeedMs());
                 }
 
                 if (!alive) {
@@ -421,47 +433,38 @@ public class LabyrinthSimulation {
             }
 
             if (!win) {
-                agent.totalDeaths++;
+                agent.snapshot().totalDeaths++;
             }
 
-            boolean mastery = agent.totalWins >= 20
-                    && successRatio() > 0.18
-                    && agent.knowsHowToUseTank
-                    && agent.totalEnemyEncounters > 60;
+            boolean mastery = agent.snapshot().totalWins >= 50
+                    && successRatio() > 0.32
+                    && agent.snapshot().totalEnemyEncounters > 200;
 
-            return new EpisodeResult(win, step, pos, oxygen, mastery);
+            return new EpisodeResult(win, step, pos, mastery, thought);
         }
 
-
         private Action chooseActionWithInstinct(String state, Position pos) {
-            double instinctProb = Math.min(0.78, 0.08 + agent.totalDeaths / 1800.0);
+            double instinctProb = Math.min(0.82, 0.10 + agent.snapshot().totalDeaths / 2500.0);
             if (random.nextDouble() < instinctProb) {
                 int dx = Integer.compare(maze.getGoal().x(), pos.x());
                 int dy = Integer.compare(maze.getGoal().y(), pos.y());
-
                 if (dx != 0 && dy != 0) {
                     return random.nextBoolean()
                             ? (dx > 0 ? Action.RIGHT : Action.LEFT)
                             : (dy > 0 ? Action.DOWN : Action.UP);
                 }
-                if (dx != 0) {
-                    return dx > 0 ? Action.RIGHT : Action.LEFT;
-                }
-                if (dy != 0) {
-                    return dy > 0 ? Action.DOWN : Action.UP;
-                }
+                if (dx != 0) return dx > 0 ? Action.RIGHT : Action.LEFT;
+                if (dy != 0) return dy > 0 ? Action.DOWN : Action.UP;
             }
             return agent.chooseAction(state);
         }
 
-        private String encodeState(Position p, int oxygen) {
-            int oxygenBucket = Math.max(0, Math.min(7, oxygen / 10));
+        private String encodeState(Position p) {
             int gx = maze.getGoal().x() - p.x();
             int gy = maze.getGoal().y() - p.y();
             int sx = Integer.compare(gx, 0);
             int sy = Integer.compare(gy, 0);
-            return p.x() + ":" + p.y() + ":o" + oxygenBucket + ":dx" + sx + ":dy" + sy
-                    + ":tank" + (agent.hasTank ? 1 : 0) + ":know" + (agent.knowsHowToUseTank ? 1 : 0);
+            return p.x() + ":" + p.y() + ":dx" + sx + ":dy" + sy;
         }
 
         private int manhattan(Position a, Position b) {
@@ -469,8 +472,48 @@ public class LabyrinthSimulation {
         }
 
         private double successRatio() {
-            int attempts = Math.max(1, agent.totalWins + agent.totalDeaths);
-            return (double) agent.totalWins / attempts;
+            int attempts = Math.max(1, agent.snapshot().totalWins + agent.snapshot().totalDeaths);
+            return (double) agent.snapshot().totalWins / attempts;
+        }
+
+        private void printProgress(int episode, EpisodeResult result) {
+            System.out.printf(Locale.US,
+                    "Episodio %d | Win=%d | Death=%d | Éxito=%.2f%% | Último pensamiento: %s%n",
+                    episode, agent.snapshot().totalWins, agent.snapshot().totalDeaths,
+                    successRatio() * 100.0, result.lastThought());
+        }
+
+        private void saveMemory(String file) {
+            if (file == null || file.isBlank()) return;
+            try {
+                Path path = Path.of(file);
+                Files.createDirectories(path.getParent());
+                try (ObjectOutputStream out = new ObjectOutputStream(Files.newOutputStream(path))) {
+                    out.writeObject(agent.snapshot());
+                }
+            } catch (Exception e) {
+                System.err.println("No se pudo guardar memoria: " + e.getMessage());
+            }
+        }
+
+        private AgentMemory loadMemory(String file) {
+            if (file == null || file.isBlank()) {
+                return null;
+            }
+            try {
+                Path path = Path.of(file);
+                if (!Files.exists(path)) return null;
+                try (ObjectInputStream in = new ObjectInputStream(Files.newInputStream(path))) {
+                    Object obj = in.readObject();
+                    if (obj instanceof AgentMemory m) {
+                        System.out.println("Memoria cargada desde: " + file);
+                        return m;
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("No se pudo cargar memoria: " + e.getMessage());
+            }
+            return null;
         }
 
         private void sleepSilently(int ms) {
@@ -480,106 +523,80 @@ public class LabyrinthSimulation {
                 Thread.currentThread().interrupt();
             }
         }
-
-        private void printProgress(int episode, EpisodeResult result) {
-            int dist = manhattan(result.lastPosition(), maze.getGoal());
-            String emotion = agent.emotionText(result.lastOxygen(), result.steps(), dist);
-            String miniMap = maze.renderMiniMap(result.lastPosition(), 8);
-
-            System.out.println("--- Progreso ---");
-            System.out.printf(Locale.US,
-                    "Episodio: %d | Victorias: %d | Muertes: %d | Éxito: %.2f%%%n",
-                    episode, agent.totalWins, agent.totalDeaths, successRatio() * 100.0);
-            System.out.printf("Encuentros con enemigos: %d | Recargas de oxígeno: %d | Tanque: %s | Sabe usar tanque: %s%n",
-                    agent.totalEnemyEncounters,
-                    agent.totalOxygenRefills,
-                    agent.hasTank ? "sí" : "no",
-                    agent.knowsHowToUseTank ? "sí" : "no");
-            System.out.printf("Resultado episodio: %s | Pasos: %d | Oxígeno restante: %d | Distancia a meta: %d%n",
-                    result.win() ? "VICTORIA" : "DERROTA",
-                    result.steps(),
-                    result.lastOxygen(),
-                    dist);
-            System.out.println("Estado emocional IA: " + emotion);
-            System.out.println("Plano local del laberinto (A = IA):");
-            System.out.println(miniMap);
-
-            if (progressWindow != null) {
-                progressWindow.update(episode, agent.totalWins, agent.totalDeaths, successRatio(),
-                        agent.totalEnemyEncounters, agent.totalOxygenRefills, agent.hasTank,
-                        agent.knowsHowToUseTank, result.win(), result.steps(), result.lastOxygen(), dist,
-                        emotion, miniMap);
-            }
-        }
     }
 
     static class ProgressWindow {
         private final JFrame frame;
-        private final JTextArea textArea;
         private final GridPanel gridPanel;
+        private final JTextArea textArea;
+        private final BrainPanel brainPanel;
+        private final JSlider speedSlider;
 
-        ProgressWindow() {
-            frame = new JFrame("Progreso IA en Laberinto");
-            textArea = new JTextArea();
-            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-            textArea.setEditable(false);
-
+        ProgressWindow(SimulationConfig config) {
+            frame = new JFrame("IA vs Enemigos - Visualización");
             gridPanel = new GridPanel();
-            JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                    new JScrollPane(gridPanel), new JScrollPane(textArea));
-            splitPane.setResizeWeight(0.70);
+            textArea = new JTextArea();
+            textArea.setEditable(false);
+            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+            brainPanel = new BrainPanel();
+
+            speedSlider = new JSlider(config.minSpeedMs(), config.maxSpeedMs(), config.initialSpeedMs());
+            speedSlider.setMajorTickSpacing(50);
+            speedSlider.setMinorTickSpacing(10);
+            speedSlider.setPaintTicks(true);
+            speedSlider.setPaintLabels(true);
+
+            JPanel right = new JPanel(new BorderLayout());
+            right.add(new JScrollPane(textArea), BorderLayout.CENTER);
+            right.add(brainPanel, BorderLayout.SOUTH);
+
+            JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                    new JScrollPane(gridPanel), right);
+            split.setResizeWeight(0.67);
+
+            JPanel top = new JPanel(new BorderLayout());
+            top.add(new JLabel("Velocidad de avance (ms por frame):"), BorderLayout.WEST);
+            top.add(speedSlider, BorderLayout.CENTER);
 
             frame.setLayout(new BorderLayout());
-            frame.add(splitPane, BorderLayout.CENTER);
-            frame.setSize(1200, 760);
+            frame.add(top, BorderLayout.NORTH);
+            frame.add(split, BorderLayout.CENTER);
+            frame.setSize(1400, 900);
             frame.setLocationRelativeTo(null);
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
             SwingUtilities.invokeLater(() -> frame.setVisible(true));
         }
 
-        void updateLive(int episode, int step, int wins, int deaths, double successRatio, int oxygenLeft,
-                        int distToGoal, String emotion, String trackingMap, boolean ended, boolean won) {
+        int currentSpeedMs() {
+            return speedSlider.getValue();
+        }
+
+        void updateLive(int episode, int step, int wins, int deaths, double success, int dist,
+                        String thought, String map, boolean ended, boolean won,
+                        double[] qValues, List<String> thoughtHistory) {
             String status = ended ? (won ? "VICTORIA" : "MUERTE") : "EN CURSO";
-            String panel = String.format(Locale.US,
-                    "[TIEMPO REAL] Episodio: %d | Paso: %d | Estado: %s\n" +
+            StringBuilder thoughts = new StringBuilder();
+            for (String t : thoughtHistory) {
+                thoughts.append("- ").append(t).append('\n');
+            }
+
+            String text = String.format(Locale.US,
+                    "Episodio: %d | Paso: %d | Estado: %s\n" +
                             "Victorias: %d | Muertes: %d | Éxito: %.2f%%\n" +
-                            "O2 restante: %d | Distancia meta: %d\n" +
-                            "Emoción IA: %s\n\n" +
-                            "Leyenda visual: IA=azul, enemigo=rojo, muro=negro, ruta=amarillo, muerte=magenta",
-                    episode, step, status, wins, deaths, successRatio * 100.0,
-                    oxygenLeft, distToGoal, emotion);
+                            "Distancia a meta: %d\n\n" +
+                            "Pensamiento actual:\n%s\n\n" +
+                            "Pensamientos de su propia mente (historial):\n%s",
+                    episode, step, status, wins, deaths, success * 100.0, dist, thought, thoughts);
+
             SwingUtilities.invokeLater(() -> {
-                textArea.setText(panel);
-                gridPanel.setMapText(trackingMap);
+                textArea.setText(text);
+                gridPanel.setMapText(map);
+                brainPanel.setQValues(qValues);
             });
         }
 
-        void update(int episode, int wins, int deaths, double successRatio, int enemyEncounters,
-                    int oxygenRefills, boolean hasTank, boolean knowsTank, boolean winEpisode,
-                    int steps, int oxygenLeft, int distToGoal, String emotion, String miniMap) {
-            String panel = String.format(Locale.US,
-                    "Episodio: %d\nVictorias: %d | Muertes: %d | Éxito: %.2f%%\n" +
-                            "Encuentros enemigos: %d | Recargas O2: %d\n" +
-                            "Tanque: %s | Usa tanque: %s\n" +
-                            "Resultado: %s | Pasos: %d | O2 restante: %d | Distancia meta: %d\n" +
-                            "Emoción IA: %s\n\n" +
-                            "Leyenda visual: IA=azul, enemigo=rojo, muro=negro, ruta=amarillo, muerte=magenta",
-                    episode, wins, deaths, successRatio * 100.0,
-                    enemyEncounters, oxygenRefills,
-                    hasTank ? "sí" : "no",
-                    knowsTank ? "sí" : "no",
-                    winEpisode ? "VICTORIA" : "DERROTA",
-                    steps, oxygenLeft, distToGoal, emotion);
-
-            SwingUtilities.invokeLater(() -> {
-                textArea.setText(panel);
-                gridPanel.setMapText(miniMap);
-            });
-        }
-
-        void appendMessage(String text) {
-            SwingUtilities.invokeLater(() -> textArea.append("\n" + text + "\n"));
+        void appendMessage(String msg) {
+            SwingUtilities.invokeLater(() -> textArea.append("\n" + msg + "\n"));
         }
     }
 
@@ -590,13 +607,11 @@ public class LabyrinthSimulation {
             setBackground(Color.DARK_GRAY);
         }
 
-        void setMapText(String mapText) {
-            this.rows = mapText.split("\n");
+        void setMapText(String map) {
+            rows = map.split("\n");
             int h = Math.max(1, rows.length);
             int w = 1;
-            for (String row : rows) {
-                w = Math.max(w, row.length());
-            }
+            for (String row : rows) w = Math.max(w, row.length());
             setPreferredSize(new Dimension(w * 18, h * 18));
             revalidate();
             repaint();
@@ -623,10 +638,8 @@ public class LabyrinthSimulation {
                 case '#': yield Color.BLACK;
                 case 'A': yield new Color(30, 90, 255);
                 case 'X': yield new Color(220, 40, 40);
-                case 'O': yield new Color(40, 220, 220);
-                case 'T': yield new Color(255, 165, 0);
                 case 'G': yield new Color(30, 180, 30);
-                case 'S': yield new Color(255, 255, 255);
+                case 'S': yield Color.WHITE;
                 case '*': yield new Color(255, 220, 40);
                 case 'M': yield new Color(255, 0, 200);
                 default: yield new Color(70, 70, 70);
@@ -634,6 +647,48 @@ public class LabyrinthSimulation {
         }
     }
 
-    record EpisodeResult(boolean win, int steps, Position lastPosition, int lastOxygen, boolean masteryReached) {
+    static class BrainPanel extends JPanel {
+        private double[] qValues = new double[]{0, 0, 0, 0};
+
+        BrainPanel() {
+            setPreferredSize(new Dimension(350, 200));
+            setBackground(new Color(25, 25, 35));
+        }
+
+        void setQValues(double[] qValues) {
+            this.qValues = Arrays.copyOf(qValues, qValues.length);
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            g.setColor(Color.WHITE);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+            g.drawString("Red neuronal interna (aprox por acción)", 12, 20);
+
+            String[] labels = {"UP", "DOWN", "LEFT", "RIGHT"};
+            int baseX = 28;
+            int baseY = 165;
+            int barW = 62;
+            int maxH = 95;
+
+            double maxAbs = 1.0;
+            for (double v : qValues) maxAbs = Math.max(maxAbs, Math.abs(v));
+
+            for (int i = 0; i < qValues.length; i++) {
+                int x = baseX + i * 78;
+                int h = (int) (Math.abs(qValues[i]) / maxAbs * maxH);
+                g.setColor(qValues[i] >= 0 ? new Color(70, 200, 120) : new Color(220, 80, 80));
+                g.fillRect(x, baseY - h, barW, h);
+                g.setColor(Color.LIGHT_GRAY);
+                g.drawRect(x, baseY - maxH, barW, maxH);
+                g.drawString(labels[i], x + 14, baseY + 15);
+                g.drawString(String.format(Locale.US, "%.2f", qValues[i]), x + 8, baseY - h - 6);
+            }
+        }
+    }
+
+    record EpisodeResult(boolean win, int steps, Position lastPosition, boolean masteryReached, String lastThought) {
     }
 }
