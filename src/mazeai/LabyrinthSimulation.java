@@ -1,11 +1,16 @@
 package mazeai;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.Graphics;
 import java.awt.GraphicsEnvironment;
 import java.util.*;
 import javax.swing.JFrame;
+import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 
@@ -508,10 +513,10 @@ public class LabyrinthSimulation {
         }
     }
 
-
     static class ProgressWindow {
         private final JFrame frame;
         private final JTextArea textArea;
+        private final GridPanel gridPanel;
 
         ProgressWindow() {
             frame = new JFrame("Progreso IA en Laberinto");
@@ -519,9 +524,14 @@ public class LabyrinthSimulation {
             textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
             textArea.setEditable(false);
 
+            gridPanel = new GridPanel();
+            JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                    new JScrollPane(gridPanel), new JScrollPane(textArea));
+            splitPane.setResizeWeight(0.70);
+
             frame.setLayout(new BorderLayout());
-            frame.add(new JScrollPane(textArea), BorderLayout.CENTER);
-            frame.setSize(900, 700);
+            frame.add(splitPane, BorderLayout.CENTER);
+            frame.setSize(1200, 760);
             frame.setLocationRelativeTo(null);
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
@@ -536,10 +546,13 @@ public class LabyrinthSimulation {
                             "Victorias: %d | Muertes: %d | Éxito: %.2f%%\n" +
                             "O2 restante: %d | Distancia meta: %d\n" +
                             "Emoción IA: %s\n\n" +
-                            "=== Plano de seguimiento (* = rastro, M = muerte, A = IA) ===\n%s",
+                            "Leyenda visual: IA=azul, enemigo=rojo, muro=negro, ruta=amarillo, muerte=magenta",
                     episode, step, status, wins, deaths, successRatio * 100.0,
-                    oxygenLeft, distToGoal, emotion, trackingMap);
-            SwingUtilities.invokeLater(() -> textArea.setText(panel));
+                    oxygenLeft, distToGoal, emotion);
+            SwingUtilities.invokeLater(() -> {
+                textArea.setText(panel);
+                gridPanel.setMapText(trackingMap);
+            });
         }
 
         void update(int episode, int wins, int deaths, double successRatio, int enemyEncounters,
@@ -551,19 +564,73 @@ public class LabyrinthSimulation {
                             "Tanque: %s | Usa tanque: %s\n" +
                             "Resultado: %s | Pasos: %d | O2 restante: %d | Distancia meta: %d\n" +
                             "Emoción IA: %s\n\n" +
-                            "=== Plano local ===\n%s",
+                            "Leyenda visual: IA=azul, enemigo=rojo, muro=negro, ruta=amarillo, muerte=magenta",
                     episode, wins, deaths, successRatio * 100.0,
                     enemyEncounters, oxygenRefills,
                     hasTank ? "sí" : "no",
                     knowsTank ? "sí" : "no",
                     winEpisode ? "VICTORIA" : "DERROTA",
-                    steps, oxygenLeft, distToGoal, emotion, miniMap);
+                    steps, oxygenLeft, distToGoal, emotion);
 
-            SwingUtilities.invokeLater(() -> textArea.setText(panel));
+            SwingUtilities.invokeLater(() -> {
+                textArea.setText(panel);
+                gridPanel.setMapText(miniMap);
+            });
         }
 
         void appendMessage(String text) {
             SwingUtilities.invokeLater(() -> textArea.append("\n" + text + "\n"));
+        }
+    }
+
+    static class GridPanel extends JPanel {
+        private String[] rows = new String[0];
+
+        GridPanel() {
+            setBackground(Color.DARK_GRAY);
+        }
+
+        void setMapText(String mapText) {
+            this.rows = mapText.split("\n");
+            int h = Math.max(1, rows.length);
+            int w = 1;
+            for (String row : rows) {
+                w = Math.max(w, row.length());
+            }
+            setPreferredSize(new Dimension(w * 18, h * 18));
+            revalidate();
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            int cell = 16;
+            for (int y = 0; y < rows.length; y++) {
+                String row = rows[y];
+                for (int x = 0; x < row.length(); x++) {
+                    char c = row.charAt(x);
+                    g.setColor(colorFor(c));
+                    g.fillRect(x * cell, y * cell, cell, cell);
+                    g.setColor(Color.GRAY);
+                    g.drawRect(x * cell, y * cell, cell, cell);
+                }
+            }
+        }
+
+        private Color colorFor(char c) {
+            return switch (c) {
+                case '#': yield Color.BLACK;
+                case 'A': yield new Color(30, 90, 255);
+                case 'X': yield new Color(220, 40, 40);
+                case 'O': yield new Color(40, 220, 220);
+                case 'T': yield new Color(255, 165, 0);
+                case 'G': yield new Color(30, 180, 30);
+                case 'S': yield new Color(255, 255, 255);
+                case '*': yield new Color(255, 220, 40);
+                case 'M': yield new Color(255, 0, 200);
+                default: yield new Color(70, 70, 70);
+            };
         }
     }
 
