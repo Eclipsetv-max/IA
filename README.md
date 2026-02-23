@@ -1,47 +1,37 @@
-# IA en Laberinto Gigante (Java)
+# IA de Laberinto con 10 ejercicios mentales (Java)
 
-Simulación en Java donde una IA:
+Proyecto renovado con:
 
-- vive en un **laberinto muy grande**,
-- enfrenta **enemigos**,
-- aprende tras cada muerte (Q-learning),
-- muestra sus **pensamientos y emociones**,
-- permite **guardar/cargar memoria** para no perder progreso,
-- y muestra una vista gráfica con:
-  - plano en **cuadraditos**,
-  - panel lateral de **“red neuronal interna”** (aproximación con valores Q por acción),
-  - historial de pensamientos propios.
-
-> Se eliminó el sistema de oxígeno: ahora el foco es IA vs enemigos.
+- **17 archivos Java** en `src/mazeai`.
+- **10 ejercicios mentales** para entrenar la mente de la IA.
+- IA en forma de **cuadradito** en un UI.
+- Vista de **cerebro** donde las líneas se iluminan cuando piensa.
+- Más de **1000 ideas/pensamientos** (1200 por defecto).
+- Aprendizaje continuo para moverse mejor y ser más eficiente.
 
 ## Ejecutar
 
 ```bash
-javac -d out src/mazeai/LabyrinthSimulation.java
-java -cp out mazeai.LabyrinthSimulation
+javac -d out src/mazeai/*.java
+java -cp out mazeai.MainApp
 ```
 
-## Guardar y cargar memoria
+## Qué se ve en la UI
 
-- Guardar en ruta personalizada:
+- Plano de laberinto en cuadrados de color (IA, enemigos, ruta, muerte, paredes).
+- Panel de pensamientos actuales e historial.
+- Panel cerebral con nodos y líneas iluminadas dinámicamente según actividad mental.
+- Slider para subir o bajar la velocidad de avance.
 
-```bash
-java -cp out mazeai.LabyrinthSimulation --save memory/mi_ia.dat
-```
+## 10 ejercicios mentales incluidos
 
-- Cargar memoria anterior y seguir entrenando:
-
-```bash
-java -cp out mazeai.LabyrinthSimulation --load memory/mi_ia.dat --save memory/mi_ia.dat
-```
-
-## Velocidad de avance
-
-En la ventana gráfica puedes **aumentar o disminuir** la velocidad con el slider superior (ms por frame).
-
-## Qué verás
-
-- Plano animado del entorno (IA, enemigos, paredes, ruta y punto de muerte).
-- Estado del episodio (en curso / victoria / muerte).
-- Pensamiento actual y pensamientos recientes de su “mente”.
-- Panel de red neuronal interna aproximada para interpretar decisiones por acción.
+1. Pattern Prediction
+2. Sequence Memory
+3. Spatial Rotation
+4. Threat Assessment
+5. Path Compression
+6. Focus Stability
+7. Strategy Switch
+8. Abstract Reasoning
+9. Creative Association
+10. Emotional Regulation
